@@ -1,0 +1,41 @@
+# Environment
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# User data (personal test results)
+*.csv
+semax_cognitive_log.csv
+
+# Whisper models (auto-downloaded)
+*.pt
+
+# Audio files
+*.wav
+*.mp3
+*.m4a
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
