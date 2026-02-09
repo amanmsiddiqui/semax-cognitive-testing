@@ -21,8 +21,6 @@ Track objective cognitive changes over time using AI-powered testing, automated 
 - [API Key Setup](#-api-key-setup)
 - [How to Use](#-how-to-use)
 - [Data & Privacy](#-data--privacy)
-- [Daily Testing Protocol](#-daily-testing-protocol)
-- [Test Details](#-test-details)
 - [Troubleshooting](#-troubleshooting)
 - [Tech Stack](#-tech-stack)
 - [License](#-license)
@@ -30,6 +28,8 @@ Track objective cognitive changes over time using AI-powered testing, automated 
 ---
 
 ## 🎯 Overview
+
+> ⚠️ **Status: Active Alpha (v0.1)** This tool is currently optimized for a specific N=1 Windows/Python 3.11 environment. While it is open-source, cross-platform compatibility is still in development. If you encounter installation issues, please feel free to fork the repo or submit a Pull Request.
 
 The **Semax Cognitive Testing Suite** is a comprehensive testing platform that combines validated cognitive assessments with modern AI to track mental performance over time. Originally built for personal N=1 experimentation with Semax (a nootropic peptide), it's now available as an open-source tool for anyone tracking cognitive interventions.
 
