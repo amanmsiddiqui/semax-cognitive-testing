@@ -22,7 +22,7 @@ Track objective cognitive changes over time using AI-powered testing, automated 
 - [How to Use](#-how-to-use)
 - [Data & Privacy](#-data--privacy)
 - [Troubleshooting](#-troubleshooting)
-- [Tech Stack](#-tech-stack)
+- [Tech Stack](#tech-stack)
 - [License](#-license)
 
 ---
@@ -207,7 +207,7 @@ GEMINI_API_KEY=AIzaSyC...your_actual_key_here
 
 ---
 
-## 🛠️ Tech Stack
+## <a name="tech-stack"></a>🛠️ Tech Stack
 
 - **Frontend:** Streamlit
 - **Speech-to-Text:** OpenAI Whisper (**Turbo** model)
