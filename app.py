@@ -45,6 +45,7 @@ from streamlit_mic_recorder import mic_recorder
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from dotenv import load_dotenv
+import concurrent.futures
 
 # Load environment variables from .env file (if it exists)
 load_dotenv()
@@ -341,6 +342,16 @@ def parse_gemini_json(response):
 
 def fetch_random_arxiv_paper():
     """Fetch a random paper from arxiv across diverse scientific domains."""
+    
+    def _fetch_op(query):
+        search = arxiv.Search(
+            query=query,
+            max_results=5,  # Fetch fewer results to speed up
+            sort_by=arxiv.SortCriterion.SubmittedDate
+        )
+        client = arxiv.Client()
+        # Use next() to get just one paper efficiently
+        return next(client.results(search))
     try:
         # Diverse search terms across ALL major arXiv categories
         search_terms = [
@@ -367,25 +378,42 @@ def fetch_random_arxiv_paper():
             # Electrical Engineering
             "signal processing", "control systems", "communications",
         ]
-        query = random.choice(search_terms)
         
-        search = arxiv.Search(
-            query=query,
-            max_results=20,
-            sort_by=arxiv.SortCriterion.SubmittedDate
-        )
+        # Max retries with different queries
+        max_retries = 2
+        for attempt in range(max_retries):
+            query = random.choice(search_terms)
+            
+            # Use ThreadPoolExecutor to enforce a strict timeout
+            # We explicitly do NOT use 'with' context manager to avoid waiting on shutdown
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(_fetch_op, query)
+            
+            try:
+                # 10 second timeout for the API call
+                paper = future.result(timeout=10)
+                
+                # Cleanup executor peacefully if successful
+                executor.shutdown(wait=False)
+                
+                if paper:
+                    return {
+                        "id": paper.entry_id,
+                        "title": paper.title,
+                        "summary": paper.summary
+                    }
+            except concurrent.futures.TimeoutError:
+                # Force shutdown of the stuck thread (fire and forget)
+                executor.shutdown(wait=False)
+                # Continue 'for' loop to try another query
+                continue
+            except Exception as e:
+                executor.shutdown(wait=False)
+                # Continue 'for' loop
+                continue
         
-        # Use Client.results() instead of deprecated Search.results()
-        client = arxiv.Client()
-        results = list(client.results(search))
-        if results:
-            paper = random.choice(results)
-            return {
-                "id": paper.entry_id,
-                "title": paper.title,
-                "summary": paper.summary
-            }
-        return None
+        return {"error": "Could not fetch paper after multiple attempts (timeout)."}
+        
     except Exception as e:
         return {"error": str(e)}
 
