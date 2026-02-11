@@ -253,6 +253,50 @@ def parse_spoken_digits(transcript):
     return digits
 
 
+def _clean_whisper_transcript(text):
+    """
+    WHISPER HALLUCINATION FIX: Strip trailing gibberish caused by silence.
+    """
+    if not text:
+        return text
+    
+    # Common Whisper hallucination phrases that appear during silence
+    hallucination_phrases = [
+        "thank you for watching", "thanks for watching", "thank you for listening",
+        "thanks for listening", "please subscribe", "like and subscribe",
+        "see you next time", "goodbye", "bye bye", "bye-bye",
+        "thank you", "you", "the end", "subtitles by",
+        "i'll see you in the next video", "i'll see you in the next one",
+    ]
+    
+    # Strip trailing hallucination phrases (case-insensitive)
+    cleaned = text.strip()
+    changed = True
+    while changed:
+        changed = False
+        lower = cleaned.lower().rstrip('.!?, ')
+        for phrase in hallucination_phrases:
+            if lower.endswith(phrase):
+                cleaned = cleaned[:len(cleaned) - (len(lower) - lower.rindex(phrase))].rstrip(' .,!?')
+                changed = True
+                break
+    
+    # Detect trailing repeated words (e.g., "word word word word")
+    words = cleaned.split()
+    if len(words) >= 4:
+        last_word = words[-1].lower().strip('.,!?')
+        repeat_count = 0
+        for w in reversed(words):
+            if w.lower().strip('.,!?') == last_word:
+                repeat_count += 1
+            else:
+                break
+        if repeat_count >= 3:
+            cleaned = ' '.join(words[:len(words) - repeat_count + 1])
+    
+    return cleaned.strip()
+
+
 def transcribe_audio(audio_bytes):
     """Transcribe audio using Whisper Turbo model."""
     # BUG 2 FIX: Check if audio bytes exist and are not empty
@@ -265,8 +309,12 @@ def transcribe_audio(audio_bytes):
             f.write(audio_bytes)
             temp_path = f.name
         
-        # Transcribe
-        result = whisper_model.transcribe(temp_path)
+        # WHISPER HALLUCINATION FIX: condition_on_previous_text=False prevents
+        # the model from using already-generated text to hallucinate more during silence
+        result = whisper_model.transcribe(
+            temp_path,
+            condition_on_previous_text=False
+        )
         
         # Cleanup
         os.unlink(temp_path)
@@ -276,6 +324,9 @@ def transcribe_audio(audio_bytes):
         # BUG 2 FIX: Check if transcript is empty
         if not transcript:
             return "ERROR: No speech detected in audio"
+        
+        # WHISPER HALLUCINATION FIX: Clean trailing gibberish from silence
+        transcript = _clean_whisper_transcript(transcript)
         
         return transcript
     except Exception as e:
@@ -343,15 +394,19 @@ def parse_gemini_json(response):
 def fetch_random_arxiv_paper():
     """Fetch a random paper from arxiv across diverse scientific domains."""
     
-    def _fetch_op(query):
+    def _fetch_op(query, start_offset):
+        # Disable arxiv library's internal retry/backoff (num_retries=0)
+        client = arxiv.Client(num_retries=0, page_size=5)
         search = arxiv.Search(
             query=query,
-            max_results=5,  # Fetch fewer results to speed up
+            max_results=5,
             sort_by=arxiv.SortCriterion.SubmittedDate
         )
-        client = arxiv.Client()
-        # Use next() to get just one paper efficiently
-        return next(client.results(search))
+        results = list(client.results(search))
+        if results:
+            idx = min(start_offset, len(results) - 1)
+            return results[idx]
+        return None
     try:
         # Diverse search terms across ALL major arXiv categories
         search_terms = [
@@ -380,18 +435,18 @@ def fetch_random_arxiv_paper():
         ]
         
         # Max retries with different queries
-        max_retries = 2
+        max_retries = 3
         for attempt in range(max_retries):
             query = random.choice(search_terms)
+            start_offset = random.randint(0, 4)
             
             # Use ThreadPoolExecutor to enforce a strict timeout
             # We explicitly do NOT use 'with' context manager to avoid waiting on shutdown
             executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-            future = executor.submit(_fetch_op, query)
+            future = executor.submit(_fetch_op, query, start_offset)
             
             try:
-                # 10 second timeout for the API call
-                paper = future.result(timeout=10)
+                paper = future.result(timeout=8)
                 
                 # Cleanup executor peacefully if successful
                 executor.shutdown(wait=False)
@@ -475,7 +530,7 @@ def render_data_visualizations():
     
     # Add raw score traces
     fig0.add_trace(go.Scatter(x=df['day'], y=df['verbal_fluency_score'], name="Verbal Fluency (words)", mode='lines+markers', line=dict(color='#4B9AFF')))
-    fig0.add_trace(go.Scatter(x=df['day'], y=df['digit_span_time_seconds'], name="Digit Span Total Time (sec)", mode='lines+markers', line=dict(color='#44DD44')))
+    fig0.add_trace(go.Scatter(x=df['day'], y=df['digit_span_attempts'], name="Digit Span Total Attempts", mode='lines+markers', line=dict(color='#44DD44')))
     fig0.add_trace(go.Scatter(x=df['day'], y=df['synthesis_score'], name="Abstract Synthesis (/10)", mode='lines+markers', line=dict(color='#FFD93D')))
     fig0.add_trace(go.Scatter(x=df['day'], y=df['stroop_interference_effect'], name="Stroop Interference (sec)", mode='lines+markers', line=dict(color='#FF6B6B')))
     
@@ -530,7 +585,29 @@ def render_data_visualizations():
     st.plotly_chart(fig2, use_container_width=True)
     
     # ═══════════════════════════════════════════════════════════════════════════
-    # GRAPH 3: Blood Pressure
+    # GRAPH 3: Digit Span Performance
+    # ═══════════════════════════════════════════════════════════════════════════
+    st.markdown("#### 🔢 Digit Span Performance")
+    
+    fig_ds = make_subplots(specs=[[{"secondary_y": True}]])
+    
+    # Total Attempts on left axis
+    fig_ds.add_trace(go.Scatter(x=df['day'], y=df['digit_span_attempts'], name="Total Attempts", mode='lines+markers', line=dict(color='#4B9AFF')), secondary_y=False)
+    
+    # Total Time on right axis
+    fig_ds.add_trace(go.Scatter(x=df['day'], y=df['digit_span_time_seconds'], name="Total Time (sec)", mode='lines+markers', line=dict(color='#FF6B6B')), secondary_y=True)
+    
+    # Max Digits Completed (5, 6, or 7) on left axis
+    fig_ds.add_trace(go.Scatter(x=df['day'], y=df['max_digit_span'], name="Max Digits Completed", mode='lines+markers', line=dict(color='#44DD44', dash='dash')), secondary_y=False)
+    
+    fig_ds = add_cycle_shapes(fig_ds, max_day)
+    fig_ds.update_layout(**common_layout, xaxis_title="Day")
+    fig_ds.update_yaxes(title_text="Count", secondary_y=False)
+    fig_ds.update_yaxes(title_text="Time (seconds)", secondary_y=True)
+    st.plotly_chart(fig_ds, use_container_width=True)
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # GRAPH 4: Blood Pressure
     # ═══════════════════════════════════════════════════════════════════════════
     st.markdown("#### 🩸 Blood Pressure")
     
@@ -820,6 +897,7 @@ def init_session_state():
         "current_hr": 70,
         "current_spo2": 98,
         "hours_since_semax": 1.0,
+        "total_dose_mcg": 400,
         "current_timestamp": "",
         
         # Phase 1: Subjective Notes
@@ -956,6 +1034,56 @@ with st.sidebar:
         else:
             st.write(f"⬜ Phase {i}: {phase}")
     
+    # SKIP TEST BUTTON - visible during test phases (2-5)
+    current = st.session_state.current_phase
+    if current in [2, 3, 4, 5]:
+        phase_names = {2: "Stroop Test", 3: "Verbal Fluency", 4: "Digit Span", 5: "Abstract Synthesis"}
+        st.warning(f"⚠️ Currently in: **{phase_names[current]}**")
+        if st.button("⏭️ Skip Test", key="skip_test_btn", type="secondary", use_container_width=True):
+            
+            if current == 2:  # Skip Stroop
+                st.session_state.stroop_congruent_time = None
+                st.session_state.stroop_incongruent_time = None
+                st.session_state.stroop_congruent_start = None
+                st.session_state.stroop_incongruent_start = None
+                # Initialize Phase 3 VF letter (normally set during Stroop→VF transition)
+                st.session_state.vf_letter = random.choice(string.ascii_uppercase)
+            
+            elif current == 3:  # Skip Verbal Fluency
+                st.session_state.vf_score = 0
+                st.session_state.vf_transcript = ""
+                st.session_state.vf_feedback = ""
+                st.session_state.vf_recording_complete = False
+                st.session_state.vf_grading_complete = False
+            
+            elif current == 4:  # Skip Digit Span
+                st.session_state.ds_total_attempts = 0
+                st.session_state.ds_max_achieved = 0
+                st.session_state.ds_total_time = 0.0
+                st.session_state.ds_test_complete = True
+                st.session_state.ds_level1_time = 0.0
+                st.session_state.ds_level2_time = 0.0
+                st.session_state.ds_level3_time = 0.0
+                st.session_state.ds_showing_digits = False
+                st.session_state.ds_digits_hidden = False
+                st.session_state.ds_last_result = None
+                st.session_state.ds_transcript = ""
+                st.session_state.ds_user_answer = []
+            
+            elif current == 5:  # Skip Abstract Synthesis
+                st.session_state.as_score = 0
+                st.session_state.as_transcript = ""
+                st.session_state.as_feedback = ""
+                st.session_state.as_paper = None
+                st.session_state.as_recording_complete = False
+                st.session_state.as_grading_complete = False
+            
+            # Advance to next phase
+            st.session_state.current_phase = current + 1
+            st.rerun()
+        
+        st.caption("Skipped tests will show blank/zero values in results and CSV.")
+    
     st.divider()
     
     # Device info - BUG 1 FIX: Show Whisper status here instead of banner
@@ -1024,10 +1152,11 @@ if st.session_state.current_phase == 1:
     # Blood Pressure, Heart Rate, SpO2 - 3 columns (only place we use columns)
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.session_state.morning_bp = st.text_input(
+        st.text_input(
             "🩸 Blood Pressure", value=st.session_state.morning_bp,
             placeholder="120/80", key="morning_bp_input"
         )
+        st.session_state.morning_bp = st.session_state.morning_bp_input
     with col2:
         st.session_state.morning_hr = st.number_input(
             "❤️ Heart Rate (BPM)", min_value=40, max_value=200,
@@ -1111,10 +1240,11 @@ if st.session_state.current_phase == 1:
     # Blood Pressure, Heart Rate, SpO2 - 3 columns
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.session_state.current_bp = st.text_input(
+        st.text_input(
             "🩸 Blood Pressure", value=st.session_state.current_bp,
             placeholder="120/80", key="current_bp_input"
         )
+        st.session_state.current_bp = st.session_state.current_bp_input
     with col2:
         st.session_state.current_hr = st.number_input(
             "❤️ Heart Rate (BPM)", min_value=40, max_value=200,
@@ -1126,11 +1256,18 @@ if st.session_state.current_phase == 1:
             value=st.session_state.current_spo2, key="current_spo2_input"
         )
     
-    # Hours Since Semax - single input
-    st.session_state.hours_since_semax = st.number_input(
-        "💊 Hours Since Semax Dose", min_value=0.0, max_value=48.0,
-        value=st.session_state.hours_since_semax, step=0.5, key="hours_since_semax_input"
-    )
+    # Hours Since Semax + Total Dose - side by side
+    dose_col1, dose_col2 = st.columns(2)
+    with dose_col1:
+        st.session_state.hours_since_semax = st.number_input(
+            "💊 Hours Since Semax Dose", min_value=0.0, max_value=48.0,
+            value=st.session_state.hours_since_semax, step=0.5, key="hours_since_semax_input"
+        )
+    with dose_col2:
+        st.session_state.total_dose_mcg = st.number_input(
+            "💉 Total Dose Amount (mcg)", min_value=0, max_value=5000,
+            value=st.session_state.total_dose_mcg, step=100, key="total_dose_mcg_input"
+        )
     
     # Current Time - 12-hour format, auto-captured
     current_time_12hr = datetime.now().strftime("%I:%M%p").lower().lstrip("0")
@@ -1960,6 +2097,7 @@ elif st.session_state.current_phase == 6:
         "current_hr": st.session_state.current_hr,
         "current_spo2": st.session_state.current_spo2,
         "hours_since_semax": st.session_state.hours_since_semax,
+        "total_dose_mcg": st.session_state.total_dose_mcg,
         "current_timestamp": st.session_state.current_timestamp,
         
         # Subjective Notes
@@ -2013,6 +2151,7 @@ elif st.session_state.current_phase == 6:
         st.write(f"❤️ HR: {data['current_hr']} BPM")
         st.write(f"💨 SpO2: {data['current_spo2']}%")
         st.write(f"💊 Hours Since Semax: {data['hours_since_semax']}")
+        st.write(f"💉 Total Dose: {data['total_dose_mcg']} mcg")
         st.write(f"⏰ Time: {data['current_timestamp']}")
     
     # Sleep Data - VERTICAL layout
