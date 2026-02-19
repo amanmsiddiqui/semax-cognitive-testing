@@ -913,6 +913,7 @@ def init_session_state():
         "vf_invalid_words": [],
         "vf_recording_complete": False,
         "vf_error": None,  # BUG 2 FIX: Track errors
+        "vf_grading_error": None,  # Track Gemini grading errors separately
         "vf_audio_bytes": None,  # Store audio bytes during auto-recording
         
         # Phase 3: Digit Span
@@ -1453,8 +1454,17 @@ elif st.session_state.current_phase == 3:
         st.subheader("📝 Your Transcript:")
         st.info(st.session_state.vf_transcript)
         
+        # Show grading error with retry button (mirrors Abstract Synthesis pattern)
+        if st.session_state.vf_grading_error:
+            st.error(f"❌ Grading Error: {st.session_state.vf_grading_error}")
+            if st.button("🔄 RETRY GRADING", type="primary", use_container_width=True, key="vf_retry_grading"):
+                st.session_state.vf_score = None
+                st.session_state.vf_invalid_words = []
+                st.session_state.vf_grading_error = None
+                st.rerun()
+        
         # Grade with Gemini
-        if st.session_state.vf_score is None and st.session_state.gemini_api_key:
+        elif st.session_state.vf_score is None and st.session_state.gemini_api_key:
             with st.spinner("🤖 Grading with Gemini..."):
                 prompt = f"""You are grading a verbal fluency test.
 The subject had 60 seconds to name words starting with the letter {letter}.
@@ -1479,8 +1489,7 @@ Return ONLY valid JSON (no markdown):
                     st.session_state.vf_invalid_words = result.get("invalid_words", [])
                     st.session_state.vf_grading_success = True
                 else:
-                    st.session_state.vf_score = 0
-                    st.session_state.vf_invalid_words = [f"Gemini Error: {error}"]
+                    st.session_state.vf_grading_error = error or "Failed to parse grading response"
             st.rerun()
         
         if st.session_state.vf_score is not None:
