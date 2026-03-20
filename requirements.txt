@@ -13,7 +13,7 @@ google-genai>=1.0.0
 torch>=2.0.0
 
 # External APIs
-arxiv>=2.0.0
+arxiv>=2.4.1
 
 # Utilities
 python-dotenv>=1.0.0
